@@ -19,7 +19,14 @@ static void draw_cb(Canvas* canvas, void* ctx);
 static void input_cb(InputEvent* event, void* ctx);
 
 static uint16_t random_key(void) {
-    return HID_KEYBOARD_A + (furi_hal_random_get() % 26);
+    uint32_t r = furi_hal_random_get() % 37;
+    if(r < 26) {
+        return HID_KEYBOARD_A + r;
+    } else if(r < 36) {
+        return HID_KEYBOARD_1 + (r - 26);
+    } else {
+        return HID_KEYBOARD_SPACEBAR;
+    }
 }
 
 int32_t keysmash_app(void* p) {
