@@ -13,6 +13,7 @@ typedef struct {
     bool running;
     uint32_t keys_sent;
     uint32_t delay_ms;
+    bool random_timing;
 } AppState;
 
 static void draw_cb(Canvas* canvas, void* ctx);
@@ -32,7 +33,7 @@ static uint16_t random_key(void) {
 int32_t keysmash_app(void* p) {
     UNUSED(p);
 
-    AppState state = {.running = false, .keys_sent = 0, .delay_ms = 50};
+    AppState state = {.running = false, .keys_sent = 0, .delay_ms = 50, .random_timing = false};
 
     FuriMessageQueue* queue = furi_message_queue_alloc(8, sizeof(InputEvent));
 
@@ -49,7 +50,13 @@ int32_t keysmash_app(void* p) {
     InputEvent event;
     bool alive = true;
     while(alive) {
-        uint32_t wait = state.running ? state.delay_ms : 50;
+        uint32_t wait = 50;
+        if(state.running) {
+            wait = state.delay_ms;
+            if(state.random_timing) {
+                wait = state.delay_ms / 2 + furi_hal_random_get() % state.delay_ms;
+            }
+        }
         if(furi_message_queue_get(queue, &event, wait) == FuriStatusOk) {
             if(event.type == InputTypeShort || event.type == InputTypeRepeat) {
                 if(event.key == InputKeyBack) {
@@ -66,6 +73,9 @@ int32_t keysmash_app(void* p) {
                     if(state.delay_ms < 500) {
                         state.delay_ms += 10;
                     }
+                    view_port_update(vp);
+                } else if(event.key == InputKeyLeft && event.type == InputTypeShort) {
+                    state.random_timing = !state.random_timing;
                     view_port_update(vp);
                 }
             }
@@ -100,7 +110,12 @@ static void draw_cb(Canvas* canvas, void* ctx) {
     snprintf(buf, sizeof(buf), "Keys: %lu", (unsigned long)state->keys_sent);
 
     char delay_buf[32];
-    snprintf(delay_buf, sizeof(delay_buf), "Delay: %lu ms", (unsigned long)state->delay_ms);
+    snprintf(
+        delay_buf,
+        sizeof(delay_buf),
+        "Delay: %lu ms%s",
+        (unsigned long)state->delay_ms,
+        state->random_timing ? " (rand)" : "");
 
     canvas_clear(canvas);
     canvas_set_font(canvas, FontPrimary);
