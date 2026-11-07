@@ -18,12 +18,27 @@ typedef enum {
 
 static const char* const mode_names[] = {"A-Z", "A-Z 0-9", "All"};
 
+typedef enum {
+    ScreenMenu,
+    ScreenRun,
+} Screen;
+
+typedef enum {
+    MenuRandom,
+    MenuText,
+    MenuCount,
+} MenuItem;
+
+static const char* const menu_names[] = {"Random characters", "Type my text"};
+
 typedef struct {
     bool running;
     uint32_t keys_sent;
     uint32_t delay_ms;
     bool random_timing;
     Mode mode;
+    Screen screen;
+    uint8_t menu_index;
 } AppState;
 
 static void draw_cb(Canvas* canvas, void* ctx);
@@ -49,7 +64,7 @@ static uint16_t random_key(Mode mode) {
 int32_t keysmash_app(void* p) {
     UNUSED(p);
 
-    AppState state = {.running = false, .keys_sent = 0, .delay_ms = 50, .random_timing = false, .mode = ModeAll};
+    AppState state = {.running = false, .keys_sent = 0, .delay_ms = 50, .random_timing = false, .mode = ModeAll, .screen = ScreenMenu, .menu_index = 0};
 
     FuriMessageQueue* queue = furi_message_queue_alloc(8, sizeof(InputEvent));
 
@@ -75,27 +90,44 @@ int32_t keysmash_app(void* p) {
         }
         if(furi_message_queue_get(queue, &event, wait) == FuriStatusOk) {
             if(event.type == InputTypeShort || event.type == InputTypeRepeat) {
-                if(event.key == InputKeyBack) {
-                    alive = false;
-                } else if(event.key == InputKeyOk && event.type == InputTypeShort) {
-                    state.running = !state.running;
-                    view_port_update(vp);
-                } else if(event.key == InputKeyUp) {
-                    if(state.delay_ms > 10) {
-                        state.delay_ms -= 10;
+                if(state.screen == ScreenMenu) {
+                    if(event.key == InputKeyBack) {
+                        alive = false;
+                    } else if(event.key == InputKeyUp && state.menu_index > 0) {
+                        state.menu_index--;
+                        view_port_update(vp);
+                    } else if(event.key == InputKeyDown && state.menu_index < MenuCount - 1) {
+                        state.menu_index++;
+                        view_port_update(vp);
+                    } else if(event.key == InputKeyOk && event.type == InputTypeShort) {
+                        state.screen = ScreenRun;
+                        view_port_update(vp);
                     }
-                    view_port_update(vp);
-                } else if(event.key == InputKeyDown) {
-                    if(state.delay_ms < 500) {
-                        state.delay_ms += 10;
+                } else {
+                    if(event.key == InputKeyBack) {
+                        state.running = false;
+                        state.screen = ScreenMenu;
+                        view_port_update(vp);
+                    } else if(event.key == InputKeyOk && event.type == InputTypeShort) {
+                        state.running = !state.running;
+                        view_port_update(vp);
+                    } else if(event.key == InputKeyUp) {
+                        if(state.delay_ms > 10) {
+                            state.delay_ms -= 10;
+                        }
+                        view_port_update(vp);
+                    } else if(event.key == InputKeyDown) {
+                        if(state.delay_ms < 500) {
+                            state.delay_ms += 10;
+                        }
+                        view_port_update(vp);
+                    } else if(event.key == InputKeyLeft && event.type == InputTypeShort) {
+                        state.random_timing = !state.random_timing;
+                        view_port_update(vp);
+                    } else if(event.key == InputKeyRight && event.type == InputTypeShort) {
+                        state.mode = (state.mode + 1) % ModeCount;
+                        view_port_update(vp);
                     }
-                    view_port_update(vp);
-                } else if(event.key == InputKeyLeft && event.type == InputTypeShort) {
-                    state.random_timing = !state.random_timing;
-                    view_port_update(vp);
-                } else if(event.key == InputKeyRight && event.type == InputTypeShort) {
-                    state.mode = (state.mode + 1) % ModeCount;
-                    view_port_update(vp);
                 }
             }
         }
@@ -137,6 +169,18 @@ static void draw_cb(Canvas* canvas, void* ctx) {
         state->random_timing ? " (rand)" : "");
 
     canvas_clear(canvas);
+    if(state->screen == ScreenMenu) {
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 10, 12, "KeySmash");
+        canvas_set_font(canvas, FontSecondary);
+        for(uint8_t i=0; i<MenuCount; i++) {
+            char line[32];
+            snprintf(line, sizeof(line), "%s %s", i==state->menu_index ? ">" : " ", menu_names[i]);
+            canvas_draw_str(canvas, 10, 30 + i * 14, line);
+        }
+        return;
+    }
+
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 10, 10, "KeySmash");
     canvas_set_font(canvas, FontSecondary);
