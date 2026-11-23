@@ -16,10 +16,11 @@ typedef enum {
     ModeLettersDigits,
     ModeAll,
     ModeAllEnter,
+    ModeAllSymbols,
     ModeCount,
 } Mode;
 
-static const char* const mode_names[] = {"A-Z", "A-Z 0-9", "All", "All+Enter"};
+static const char* const mode_names[] = {"A-Z", "A-Z 0-9", "All", "All+Enter", "All+Sym"};
 
 typedef enum {
     ScreenMenu,
@@ -53,6 +54,8 @@ typedef struct {
 static void draw_cb(Canvas* canvas, void* ctx);
 static void input_cb(InputEvent* event, void* ctx);
 
+static const char symbols[] = "!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~";
+
 static uint16_t random_key(Mode mode) {
     uint32_t count = 37;
     if(mode == ModeLetters) {
@@ -61,6 +64,8 @@ static uint16_t random_key(Mode mode) {
         count = 36;
     } else if(mode == ModeAllEnter) {
         count = 38;
+    } else if(mode == ModeAllSymbols) {
+        count = 37 + (sizeof(symbols) - 1);
     }
     uint32_t r = furi_hal_random_get() % count;
     if(r < 26) {
@@ -69,9 +74,38 @@ static uint16_t random_key(Mode mode) {
         return HID_KEYBOARD_1 + (r - 26);
     } else if(r < 37) {
         return HID_KEYBOARD_SPACEBAR;
-    } else {
+    } else if(mode == ModeAllEnter) {
         return HID_KEYBOARD_RETURN;
+    } else {
+        return HID_ASCII_TO_KEY(symbols[r - 37]);
     }
+}
+
+static bool load_text_file(AppState* state) {
+    bool loaded = false;
+
+    DialogsApp* dialogs = furi_record_open(RECORD_DIALOGS);
+    FuriString* path = furi_string_alloc_set("/ext");
+    DialogsFileBrowserOptions options;
+    dialog_file_browser_set_basic_options(&options, ".txt", NULL);
+    bool picked = dialog_file_browser_show(dialogs, path, path, &options);
+    furi_record_close(RECORD_DIALOGS);
+
+    if(picked) {
+        Storage* storage = furi_record_open(RECORD_STORAGE);
+        File* file = storage_file_alloc(storage);
+        if(storage_file_open(file, furi_string_get_cstr(path), FSAM_READ, FSOM_OPEN_EXISTING)) {
+            state->text_len = storage_file_read(file, state->text, TEXT_MAX);
+            state->text_pos = 0;
+            loaded = state->text_len > 0;
+        }
+        storage_file_close(file);
+        storage_file_free(file);
+        furi_record_close(RECORD_STORAGE);
+    }
+
+    furi_string_free(path);
+    return loaded;
 }
 
 int32_t keysmash_app(void* p) {
@@ -114,7 +148,15 @@ int32_t keysmash_app(void* p) {
                         state.menu_index++;
                         view_port_update(vp);
                     } else if(event.key == InputKeyOk && event.type == InputTypeShort) {
-                        state.screen = ScreenRun;
+                        if(state.menu_index == MenuText) {
+                            if(load_text_file(&state)) {
+                                state.text_mode = true;
+                                state.screen = ScreenRun;
+                            }
+                        } else {
+                            state.text_mode = false;
+                            state.screen = ScreenRun;
+                        }
                         view_port_update(vp);
                     }
                 } else {
@@ -147,11 +189,27 @@ int32_t keysmash_app(void* p) {
         }
 
         if(state.running) {
-            uint16_t key = random_key(state.mode);
-            furi_hal_hid_kb_press(key);
-            furi_delay_ms(10);
-            furi_hal_hid_kb_release(key);
-            state.keys_sent++;
+            uint16_t key = HID_KEYBOARD_NONE;
+            if(state.text_mode) {
+                if(state.text_pos >= state.text_len) {
+                    state.running = false;
+                    state.text_pos = 0;
+                    view_port_update(vp);
+                } else {
+                    key = HID_ASCII_TO_KEY(state.text[state.text_pos]);
+                    state.text_pos++;
+                }
+            } else {
+                key = random_key(state.mode);
+            }
+
+            if(key != HID_KEYBOARD_NONE) {
+                furi_hal_hid_kb_press(key);
+                furi_delay_ms(10);
+                furi_hal_hid_kb_release(key);
+                state.keys_sent++;
+            }
+
             if(state.keys_sent % 20 == 0 || state.delay_ms > 100) {
                 view_port_update(vp);
             }
@@ -199,7 +257,17 @@ static void draw_cb(Canvas* canvas, void* ctx) {
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 10, 10, "KeySmash");
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str_aligned(canvas, 126, 10, AlignRight, AlignBottom, mode_names[state->mode]);
+    if(state->text_mode) {
+        char pct[16];
+        snprintf(
+            pct,
+            sizeof(pct),
+            "%u%%",
+            (unsigned)(state->text_len ? state->text_pos * 100 / state->text_len : 0));
+        canvas_draw_str_aligned(canvas, 126, 10, AlignRight, AlignBottom, pct);
+    } else {
+        canvas_draw_str_aligned(canvas, 126, 10, AlignRight, AlignBottom, mode_names[state->mode]);
+    }
     canvas_draw_str(canvas, 10, 22, state->running ? "Running (OK = stop)" : "Paused (OK = start)");
     canvas_draw_str(canvas, 10, 34, buf);
     canvas_draw_str(canvas, 10, 46, delay_buf);
